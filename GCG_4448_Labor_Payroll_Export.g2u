@@ -1,0 +1,156 @@
+Program.Sub.Preflight.Start
+
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN Apr 17, 2017
+'Shop Floor> Transactions> Transfer Labor to Payroll
+'Specs: Talked to Tanner. He said they only need EmployeeID,CompanyID(always "LKI"),EarningsID,DateWorked(End_Cymd),Amount(Hours) in the export file.
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+f.Intrinsic.Control.If(v.Caller.Hook,=,"15290")
+	f.Intrinsic.Control.CallSub(Create_File)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4448_Labor_Payroll_Export.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Create_File.Start
+F.Intrinsic.Control.SetErrorHandler("Create_File_Err")
+F.Intrinsic.Control.ClearErrors
+
+v.Local..BulkDeclareString(sError, sSQL, sCymd, sTime, sRecord, sEarningsID, sDateWorked, sYear, sMonth, sDate)
+v.Local..BulkDeclareLong(iCounter, iEC)
+
+F.Intrinsic.String.Left(V.Passed.888888,8,V.Local.sCymd)
+F.Intrinsic.String.Mid(V.Passed.888888,9,6,V.Local.sTime)
+
+F.Intrinsic.String.Concat("Select Employee as EmployeeID, EC, End_Cymd as DateWorked, Hours as Amount, Type From Pyrl_Labor_Xfer where Run_Cymd = '",V.Local.sCymd,"' AND Run_Time = '",V.Local.sTime,"'",V.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("DT","conX",v.Local.sSQL,True)
+
+f.Intrinsic.Control.If(v.DataTable.DT.Rowcount,=,0)
+	F.Intrinsic.UI.Msgbox("No records found.","Payroll Export")
+	f.Data.DataTable.Close("DT")
+	f.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+V.Local.sRecord.Set("#EmployeeID,#CompanyID,#EarningsID,#DateWorked,#Amount,#MultipleCheckID,#BenefitID,#DeductionAmount,#DeductionPercent,#TaxCodeID,#OverrideTypeID,#OverrideAmountTypeID,#OverrideAmount,#CheckNumber")
+
+f.Intrinsic.Control.For(v.Local.iCounter,0,v.DataTable.DT.Rowcount--,1)
+
+	'Process DateWorked
+	f.Intrinsic.String.Left(v.DataTable.DT(v.Local.iCounter).DateWorked!FieldValTrim,4,v.Local.sYear)
+	f.Intrinsic.String.Mid(v.DataTable.DT(v.Local.iCounter).DateWorked!FieldValTrim,5,2,v.Local.sMonth)
+	f.Intrinsic.String.Right(v.DataTable.DT(v.Local.iCounter).DateWorked!FieldValTrim,2,v.Local.sDate)
+	
+	'Process EC
+	V.Local.sEarningsID.Set("")
+	f.Intrinsic.Control.If(v.DataTable.DT(v.Local.iCounter).EC!FieldValTrim,<>,"")
+		v.Local.iEC.Set(v.DataTable.DT(v.Local.iCounter).EC!FieldValString)
+		
+		f.Intrinsic.String.Build("Select DESCR as Earnings_Desc from V_PAYROLL_PAY_CATS WHERE YEAR = '{0}' AND PAY_CATEGORY = '{1}'",V.Local.sYear,v.Local.iEC,v.Local.sSQL)
+		
+		F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSQL)
+		F.Intrinsic.Control.If(V.ODBC.conx!rst.EOF,<>,True)
+			v.Local.sEarningsID.Set(v.ODBC.conx!rst.FieldValTrim!Earnings_Desc)
+		f.Intrinsic.Control.EndIf
+		f.ODBC.conx!rst.Close			
+	
+	f.Intrinsic.Control.Else
+		'EC is blank so we need to look at Type and set the value for it
+		f.Intrinsic.Control.SelectCase(v.DataTable.DT(v.Local.iCounter).TYPE!FieldValTrim)
+			f.Intrinsic.Control.Case("RT")
+				'Regular Time
+				v.Local.sEarningsID.Set("REG")
+			f.Intrinsic.Control.Case("OT")
+				'Overtime
+				v.Local.sEarningsID.Set("OVT")
+			f.Intrinsic.Control.Case("DT")
+				'Double Time
+				v.Local.sEarningsID.Set("DBL")
+			f.Intrinsic.Control.Case("HT")
+				'Holiday
+				v.Local.sEarningsID.Set("HOL")
+		f.Intrinsic.Control.EndSelect
+	f.Intrinsic.Control.EndIf
+	
+
+	
+	f.Intrinsic.String.Concat(v.Local.sMonth,"/",v.Local.sDate,"/",v.Local.sYear,v.Local.sDateWorked)
+	
+	f.Intrinsic.String.Build("{0}{1}{2},{3},{4},{5},{6},,,,,,,,,",V.Local.sRecord,v.Ambient.NewLine,v.DataTable.DT(v.Local.iCounter).EmployeeID!FieldValString,"LKI",v.Local.sEarningsID,v.Local.sDateWorked,v.DataTable.DT(v.Local.iCounter).Amount!FieldValString,V.Local.sRecord)
+
+F.Intrinsic.Control.Next(v.Local.iCounter)
+
+F.ODBC.Connection!conX.Close
+
+F.Intrinsic.Control.CallSub(Write_File,"REC",V.Local.sRecord)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Create_File_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4448_Labor_Payroll_Export.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Create_File.End
+
+Program.Sub.Write_File.Start
+F.Intrinsic.Control.SetErrorHandler("Write_File_Err")
+F.Intrinsic.Control.ClearErrors
+
+v.Local..BulkDeclareString(sError, sFile, sFileName, sFullPath, sDate)
+V.Local.bexists.Declare(Boolean)
+
+f.Intrinsic.String.Build("{0}\Optimum_Pyrl_Xport",v.Caller.FilesDir,v.Local.sfile)
+'see if the folder exists
+F.Intrinsic.File.Exists(V.Local.sfile,V.Local.bexists)
+'if the file doesn't exists create it
+F.Intrinsic.Control.If(V.Local.bexists,=,False)
+	F.Intrinsic.File.CreateDir(V.Local.sfile)
+F.Intrinsic.Control.EndIf
+'set the date and format it
+Function.Intrinsic.String.Format (V.Ambient.Date ,"MMDDYYYY",V.Local.sdate)
+
+'build the filename
+F.Intrinsic.String.Build("{0}.csv",V.Local.sDate,V.Local.sfilename)
+'build the full path
+F.Intrinsic.String.Build("{0}\{1}",V.local.sfile,V.Local.sfilename,V.Local.sfullpath)
+F.Intrinsic.File.String2File(V.Local.sfullpath,V.Args.REC)
+F.Intrinsic.UI.Msgbox("File created")
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Write_File_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4448_Labor_Payroll_Export.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Write_File.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$4/12/2017 3:38:35 PM$}$False
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$Original customer was SMS Millcraft.
+
+This is a re-write of the original script due to many inconsistencies with the original.
+Program.Sub.Comments.End
